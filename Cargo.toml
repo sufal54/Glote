@@ -2,6 +2,13 @@
 name = "glote"
 version = "0.1.0"
 edition = "2024"
+description = "A fast Rust web library"
+license = "MIT"
+readme = "Readme.md"
+repository = "https://github.com/sufal54/Glote"
+keywords = ["web", "framework", "http", "restfullapi", "api"]
+categories = ["web-programming::http-server"]
+
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
