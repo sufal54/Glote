@@ -8,8 +8,10 @@ use crate::response::Response;
 use crate::workerpool::WorkerPool;
 
 // Atomically reference counter with safely travale though thread with own lifetime/ownership
+pub type Next<'a> = &'a mut dyn FnMut();
+
 pub type Handler = dyn Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static;
-pub type Middleware = dyn Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut()) +
+pub type Middleware = dyn Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) +
     Send +
     Sync +
     'static;
@@ -90,11 +92,7 @@ impl Glote {
 
     // Set Global Middleware
     pub fn use_middleware<F>(&self, middleware: F)
-        where
-            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut()) +
-                Send +
-                Sync +
-                'static
+        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) + Send + Sync + 'static
     {
         let mut middlewares = self.middleware.write().unwrap();
         middlewares.push(Arc::new(middleware));
@@ -260,9 +258,7 @@ impl Glote {
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
     {
         // Make empty middleware
-        let empty_middleware: Vec<
-            fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())
-        > = vec![];
+        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
 
         self.get_with_middleware(path, empty_middleware, handler);
     }
@@ -271,7 +267,7 @@ impl Glote {
     pub fn get_with_middleware<F>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
         handler: F
     )
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
@@ -306,9 +302,7 @@ impl Glote {
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
     {
         // Make empty middleware
-        let empty_middleware: Vec<
-            fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())
-        > = vec![];
+        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
 
         self.post_with_middleware(path, empty_middleware, handler);
     }
@@ -317,7 +311,7 @@ impl Glote {
     pub fn post_with_middleware<F>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
         handler: F
     )
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
@@ -350,9 +344,7 @@ impl Glote {
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
     {
         // Make empty middleware
-        let empty_middleware: Vec<
-            fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())
-        > = vec![];
+        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
 
         self.put_with_middleware(path, empty_middleware, handler);
     }
@@ -361,7 +353,7 @@ impl Glote {
     pub fn put_with_middleware<F>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
         handler: F
     )
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
@@ -395,9 +387,7 @@ impl Glote {
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
     {
         // Make empty middleware
-        let empty_middleware: Vec<
-            fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())
-        > = vec![];
+        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
 
         self.delete_with_middleware(path, empty_middleware, handler);
     }
@@ -406,7 +396,7 @@ impl Glote {
     pub fn delete_with_middleware<F>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, &mut dyn FnMut())>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
         handler: F
     )
         where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static

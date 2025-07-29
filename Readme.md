@@ -1,6 +1,6 @@
-# Glote - Rust Web Framework
+# Glote - Rust Web Library
 
-Glote is a fast web framework in pure Rust, inspired by simplicity and performance. It supports routing, middleware, path/query/body parsing, JSON responses — all thread-safe and scalable using worker pools.
+Glote is a fast web library in pure Rust, inspired by simplicity and performance. It supports routing, middleware, path/query/body parsing, JSON responses — all thread-safe and scalable using worker pools.
 
 # Getting Started
 
@@ -94,10 +94,25 @@ Middlewares can inspect, log, or halt requests before reaching the handler.
 ## Global Middleware
 
 ```rust
+use glote::{RequestExt}; // Needed for req.with_read
+
 server.use_middleware(|req, _res, next| {
     req.with_read(|r| {
         println!("{} {}", r.method, r.path);
     });
+    next();
+});
+```
+
+- or
+
+Make sure you release the lock
+
+```rust
+server.use_middleware(|req, _res, next| {
+    let req = req.read().unwrap();
+    println!("{} {}", req.method, req.path);
+    drop(req); // Drop it manually or it's takes resources or wirte lock which makes trouble in some cases
     next();
 });
 ```
@@ -120,15 +135,33 @@ server.get_with_middleware("/check", vec![logger], |req, res| {
 
 ## Stop Middleware Chain
 
-Use res.stop() to halt propagation:
+Return from middleware:
 
 ```rust
 server.use_middleware(|_req, res, _next| {
     res.status(401);
-    res.send("Unauthorized");
-    // Does not call next(), so route handler will not run
+    res.send("Unauthorized"); // send and json method will automatically stop chain
 });
 
+```
+
+# CORS Middleware
+
+Glote supports pluggable CORS middleware to control cross-origin requests. You can use the built-in Cors struct to allow or deny specific origins.
+
+````rust
+use glote::{Cors, CorsExt};
+// Allow only specific origins (use "*" to allow all)
+let cors = Cors::new(&["http://localhost:4000", "http://127.0.0.1:4000"]);
+
+// Register CORS middleware
+server.use_middleware({
+    let cors = Arc::clone(&cors);
+    move |req, res, next| {
+        // CorsExt for this method
+        cors.run_middleware(req, res, next);
+    }
+});
 ```
 
 # Response Extensions
@@ -137,7 +170,7 @@ server.use_middleware(|_req, res, _next| {
 
 ```rust
 res.send("Hello World!");
-```
+````
 
 ## JSON Response
 

@@ -1,14 +1,21 @@
-use std::{ io::Write, net::TcpStream, sync::{ Arc, RwLock } };
+use std::{ collections::HashMap, io::Write, net::TcpStream, sync::{ Arc, RwLock } };
 
 use serde::Serialize;
 
 pub trait ResponseExt {
+    fn with_write<F>(&self, f: F) where F: FnOnce(&mut Response);
     fn status(&self, code: u16);
     fn send(&self, body: &str);
     fn json<T: Serialize>(&self, data: &T);
 }
 
 impl ResponseExt for Arc<RwLock<Response>> {
+    fn with_write<F>(&self, f: F) where F: FnOnce(&mut Response) {
+        if let Ok(mut res) = self.write() {
+            f(&mut res);
+        }
+    }
+
     fn status(&self, code: u16) {
         if let Ok(mut res) = self.write() {
             res.status(code);
@@ -32,6 +39,7 @@ impl ResponseExt for Arc<RwLock<Response>> {
 pub struct Response {
     stream: Arc<RwLock<TcpStream>>,
     status: u16,
+    headers: Arc<RwLock<HashMap<String, String>>>,
     stopped: Arc<RwLock<bool>>,
 }
 
@@ -40,7 +48,20 @@ impl Response {
         Self {
             stream: Arc::new(RwLock::new(stream)),
             status: 200,
+            headers: Arc::new(RwLock::new(HashMap::new())),
             stopped: Arc::new(RwLock::new(false)),
+        }
+    }
+
+    pub fn set_header(&self, key: &str, value: &str) {
+        if let Ok(mut headers) = self.headers.write() {
+            headers.insert(key.to_string(), value.to_string());
+        }
+    }
+
+    pub fn remove_header(&self, key: &str) {
+        if let Ok(mut headers) = self.headers.write() {
+            headers.remove(key);
         }
     }
 
