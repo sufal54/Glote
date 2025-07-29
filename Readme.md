@@ -149,7 +149,7 @@ server.use_middleware(|_req, res, _next| {
 
 Glote supports pluggable CORS middleware to control cross-origin requests. You can use the built-in Cors struct to allow or deny specific origins.
 
-````rust
+```rust
 use glote::{Cors, CorsExt};
 // Allow only specific origins (use "*" to allow all)
 let cors = Cors::new(&["http://localhost:4000", "http://127.0.0.1:4000"]);
@@ -170,7 +170,7 @@ server.use_middleware({
 
 ```rust
 res.send("Hello World!");
-````
+```
 
 ## JSON Response
 
