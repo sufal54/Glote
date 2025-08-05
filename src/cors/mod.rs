@@ -1,13 +1,13 @@
 use std::sync::{ Arc, RwLock };
 
-use crate::{ Next, Request, Response, RequestExt, ResponseExt };
+use crate::{ Next, Req, Res, RequestExt, ResponseExt };
 
 pub trait CorsExt {
-    fn run_middleware(&self, req: Arc<RwLock<Request>>, res: Arc<RwLock<Response>>, next: Next);
+    fn run_middleware(&self, req: Req, res: Res, next: Next);
 }
 
 impl CorsExt for Arc<RwLock<Cors>> {
-    fn run_middleware(&self, req: Arc<RwLock<Request>>, res: Arc<RwLock<Response>>, next: Next) {
+    fn run_middleware(&self, req: Req, res: Res, next: Next) {
         if let Ok(cors) = self.read() {
             cors.cors_middleware(req, res, next);
         } else {
@@ -32,19 +32,14 @@ impl Cors {
         )
     }
 
-    pub fn cors_middleware(
-        &self,
-        req: Arc<RwLock<Request>>,
-        res: Arc<RwLock<Response>>,
-        next: Next
-    ) {
+    pub fn cors_middleware(&self, req: Req, res: Res, next: Next) {
         let origin = req.with_read(|req| {
             req.headers.get("origin").cloned().unwrap_or_default()
         });
 
         let allow_all = self.allow_origins.contains(&"*".to_string());
 
-        // Unlisted Origin
+        // Case Unlisted Origin
         if !allow_all && !self.allow_origins.contains(&origin) {
             res.with_write(|res| {
                 res.status(401);

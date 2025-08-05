@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use std::sync::{ Arc, RwLock };
 
+pub type Req = Arc<RwLock<Request>>;
+
 pub trait RequestExt {
     fn with_write<F>(&self, f: F) where F: FnOnce(&mut Request);
     fn with_read<F, R>(&self, f: F) -> R where F: FnOnce(&Request) -> R;
@@ -12,7 +14,7 @@ pub trait RequestExt {
     fn body(&self) -> Option<String>;
 }
 
-impl RequestExt for Arc<RwLock<Request>> {
+impl RequestExt for Req {
     fn with_write<F>(&self, f: F) where F: FnOnce(&mut Request) {
         if let Ok(mut req) = self.write() {
             f(&mut req);

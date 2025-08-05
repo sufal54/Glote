@@ -2,6 +2,8 @@ use std::{ collections::HashMap, io::Write, net::TcpStream, sync::{ Arc, RwLock 
 
 use serde::Serialize;
 
+pub type Res = Arc<RwLock<Response>>;
+
 pub trait ResponseExt {
     fn with_write<F>(&self, f: F) where F: FnOnce(&mut Response);
     fn status(&self, code: u16);
@@ -9,7 +11,7 @@ pub trait ResponseExt {
     fn json<T: Serialize>(&self, data: &T);
 }
 
-impl ResponseExt for Arc<RwLock<Response>> {
+impl ResponseExt for Res {
     fn with_write<F>(&self, f: F) where F: FnOnce(&mut Response) {
         if let Ok(mut res) = self.write() {
             f(&mut res);

@@ -1,5 +1,5 @@
-use std::sync::{ Arc, RwLock };
-use glote::{ Cors, Glote, Request, Response, ResponseExt, CorsExt };
+use std::{ sync::{ Arc }, thread, time::Duration };
+use glote::{ Cors, CorsExt, Glote, ResponseExt };
 
 #[test]
 fn test_server_instantiation() {
@@ -13,21 +13,22 @@ fn test_set_workers() {
     Arc::get_mut(&mut server).unwrap().set_warkers(8);
 }
 
-fn test_server_working() {
-    let mut server = Glote::new();
-    let cors = Cors::new(&["http://localhost:4000"]);
+// #[test]
+// fn _test_server_working() {
+//     let server = Glote::new();
+//     // let cors = Cors::new(&["http://localhost:4000"]);
 
-    server.use_middleware({
-        let cors = Arc::clone(&cors);
-        move |req, res, next| {
-            cors.run_middleware(req, res, next);
-        }
-    });
+//     // server.use_middleware({
+//     //     let cors = Arc::clone(&cors);
+//     //     move |req, res, next| {
+//     //         cors.run_middleware(req, res, next);
+//     //     }
+//     // });
 
-    server.get("/", |req, res| {
-        res.status(200);
-        res.send("okay");
-    });
+//     server.get("/", |_req, res| {
+//         res.status(200);
+//         res.send("okay");
+//     });
 
-    server.listen(3000);
-}
+//     server.listen(3000);
+// }

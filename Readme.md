@@ -1,4 +1,4 @@
-# Glote - Rust Web Library
+# Glote - Rust Multithreading Web Library
 
 Glote is a fast web library in pure Rust, inspired by simplicity and performance. It supports routing, middleware, path/query/body parsing, JSON responses — all thread-safe and scalable using worker pools.
 
@@ -120,10 +120,10 @@ server.use_middleware(|req, _res, next| {
 ## Route-specific Middleware
 
 ```rust
-use glote::{Request,Response};
+use glote::{Req,Res};
 use std::sync::{Arc, RwLock};
 
-fn logger(req: Arc<RwLock<Request>>, res: Arc<RwLock<Response>>, next: &mut dyn FnMut()) {
+fn logger(req: Req, res: Res, next: &mut dyn FnMut()) {
     println!("[Route MW] {}", req.read().unwrap().path);
     next();
 }
@@ -221,6 +221,19 @@ fn main() {
 
 ```
 
+# Request Struct
+
+```rs
+pub struct Request {
+    pub method: String,
+    pub path: String,
+    pub path_params: HashMap<String, String>,
+    pub query: HashMap<String, String>,
+    pub body: Option<String>,
+    pub headers: HashMap<String, String>,
+}
+```
+
 # RequestExt Trait
 
 Highly recommend to use this trait in middleware
@@ -265,6 +278,17 @@ req.with_write(|r| {
 });
 ```
 
+# Response Struct
+
+```rs
+pub struct Response {
+    stream: Arc<RwLock<TcpStream>>,
+    status: u16,
+    headers: Arc<RwLock<HashMap<String, String>>>,
+    stopped: Arc<RwLock<bool>>,
+}
+```
+
 # ResponseExt Trait
 
 ```rust
@@ -293,6 +317,8 @@ res.json(&serde_json::json!({ "message": "Success" }));
     ✅ JSON and plain response
 
     ✅ Route match + param parsing
+
+    ✅ Workerpool
 
     ⏳ Static file serving
 

@@ -1,12 +1,22 @@
 [package]
 name = "glote"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "A fast Rust web library"
 license = "MIT"
 readme = "Readme.md"
 repository = "https://github.com/sufal54/Glote"
-keywords = ["web", "framework", "http", "restfullapi", "api"]
+keywords = [
+    "web",
+    "express",
+    "expressjs",
+    "framework",
+    "library",
+    "server",
+    "http",
+    "restfullapi",
+    "api",
+]
 categories = ["web-programming::http-server"]
 
 
