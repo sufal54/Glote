@@ -6,17 +6,7 @@ description = "A fast Rust web library"
 license = "MIT"
 readme = "Readme.md"
 repository = "https://github.com/sufal54/Glote"
-keywords = [
-    "web",
-    "express",
-    "expressjs",
-    "framework",
-    "library",
-    "server",
-    "http",
-    "restfullapi",
-    "api",
-]
+keywords = ["web", "library", "server", "http", "api"]
 categories = ["web-programming::http-server"]
 
 
