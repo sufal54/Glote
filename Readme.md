@@ -120,10 +120,14 @@ server.use_middleware(|req, _res, next| {
 ## Route-specific Middleware
 
 ```rust
-use glote::{Req,Res};
+use glote::{Req,Res,Next};
 use std::sync::{Arc, RwLock};
 
-fn logger(req: Req, res: Res, next: &mut dyn FnMut()) {
+// Req = Arc<Rwlock<Request>>
+// Res = Arc<Rwlock<Responce>>
+// Next = &mut dyn FnMut()
+
+fn logger(req: Req, res: Res, next: Next) {
     println!("[Route MW] {}", req.read().unwrap().path);
     next();
 }

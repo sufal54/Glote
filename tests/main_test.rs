@@ -13,7 +13,6 @@ fn test_set_workers() {
     Arc::get_mut(&mut server).unwrap().set_warkers(8);
 }
 
-// #[test]
 // fn _test_server_working() {
 //     let server = Glote::new();
 //     // let cors = Cors::new(&["http://localhost:4000"]);
@@ -26,6 +25,7 @@ fn test_set_workers() {
 //     // });
 
 //     server.get("/", |_req, res| {
+//         std::thread::sleep(std::time::Duration::from_millis(500));
 //         res.status(200);
 //         res.send("okay");
 //     });

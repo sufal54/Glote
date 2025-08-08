@@ -171,7 +171,7 @@ impl Worker {
                         }
                     }
                     Err(RecvTimeoutError::Timeout) => {
-                        continue;
+                        thread::yield_now();
                     }
                     Err(_) => {
                         eprintln!("Worker {id} disconnected; shutting down.");
