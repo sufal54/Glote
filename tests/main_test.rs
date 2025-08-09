@@ -13,22 +13,27 @@ fn test_set_workers() {
     Arc::get_mut(&mut server).unwrap().set_warkers(8);
 }
 
-// fn _test_server_working() {
-//     let server = Glote::new();
-//     // let cors = Cors::new(&["http://localhost:4000"]);
+#[test]
+fn _test_server_working() {
+    let server = Glote::new();
+    // let cors = Cors::new(&["http://localhost:4000"]);
 
-//     // server.use_middleware({
-//     //     let cors = Arc::clone(&cors);
-//     //     move |req, res, next| {
-//     //         cors.run_middleware(req, res, next);
-//     //     }
-//     // });
+    // server.use_middleware({
+    //     let cors = Arc::clone(&cors);
+    //     move |req, res, next| {
+    //         cors.run_middleware(req, res, next);
+    //     }
+    // });
 
-//     server.get("/", |_req, res| {
-//         std::thread::sleep(std::time::Duration::from_millis(500));
-//         res.status(200);
-//         res.send("okay");
-//     });
+    server.get("/", |_req, res| {
+        // std::thread::sleep(std::time::Duration::from_millis(500));
+        res.status(200);
+        res.send("okay");
+    });
 
-//     server.listen(3000);
-// }
+    server.post("/", |req, res| {
+        res.send(&format!("{:?}\n\n{:?}", req.read().unwrap().headers, req.read().unwrap().body));
+    });
+
+    server.listen(3000);
+}

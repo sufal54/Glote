@@ -1,6 +1,6 @@
 [package]
 name = "glote"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 description = "A fast Rust web library"
 license = "MIT"
@@ -11,5 +11,6 @@ categories = ["web-programming::http-server"]
 
 
 [dependencies]
+libc = "0.2.174"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
