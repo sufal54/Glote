@@ -1,42 +1,51 @@
 use std::collections::HashMap;
-
-use std::sync::{ Arc, RwLock };
+use tokio::sync::RwLock;
+use std::sync::{ Arc };
 
 pub type Req = Arc<RwLock<Request>>;
 
 pub trait RequestExt {
-    fn with_write<F>(&self, f: F) where F: FnOnce(&mut Request);
-    fn with_read<F, R>(&self, f: F) -> R where F: FnOnce(&Request) -> R;
+    async fn with_write<F, Fut>(&self, f: F)
+        where F: FnOnce(Req) -> Fut + Send, Fut: std::future::Future<Output = ()> + Send;
 
-    fn path(&self) -> Option<String>;
-    fn query(&self, key: &str) -> Option<String>;
-    fn params(&self, key: &str) -> Option<String>;
-    fn body(&self) -> Option<String>;
+    async fn with_read<F, Fut, R>(&self, f: F) -> R
+        where F: FnOnce(Req) -> Fut + Send, Fut: std::future::Future<Output = R> + Send, R: Send;
+
+    async fn path(&self) -> Option<String>;
+    async fn query(&self, key: &str) -> Option<String>;
+    fn params(&self, key: &str) -> impl std::future::Future<Output = Option<String>> + Send;
+    async fn body(&self) -> Option<String>;
 }
 
 impl RequestExt for Req {
-    fn with_write<F>(&self, f: F) where F: FnOnce(&mut Request) {
-        if let Ok(mut req) = self.write() {
-            f(&mut req);
-        }
-    }
-    fn with_read<F, R>(&self, f: F) -> R where F: FnOnce(&Request) -> R {
-        let req = self.read().unwrap();
-        f(&req)
-    }
-    fn path(&self) -> Option<String> {
-        if let Ok(req) = self.read() { Some(req.path.clone()) } else { None }
-    }
-    fn query(&self, key: &str) -> Option<String> {
-        self.read().ok()?.query(key).cloned()
+    async fn with_write<F, Fut>(&self, f: F)
+        where F: FnOnce(Req) -> Fut + Send, Fut: Future<Output = ()> + Send
+    {
+        let req_clone = self.clone();
+        f(req_clone.clone()).await;
     }
 
-    fn params(&self, key: &str) -> Option<String> {
-        self.read().ok()?.params(key).cloned()
+    async fn with_read<F, Fut, R>(&self, f: F) -> R
+        where F: FnOnce(Req) -> Fut + Send, Fut: Future<Output = R> + Send, R: Send
+    {
+        let req_clone = self.clone();
+
+        f(req_clone.clone()).await
+    }
+    async fn path(&self) -> Option<String> {
+        let req = self.read().await;
+        Some(req.path.clone())
+    }
+    async fn query(&self, key: &str) -> Option<String> {
+        self.read().await.query(key).cloned()
     }
 
-    fn body(&self) -> Option<String> {
-        self.read().ok()?.body.clone()
+    async fn params(&self, key: &str) -> Option<String> {
+        self.read().await.params(key).cloned()
+    }
+
+    async fn body(&self) -> Option<String> {
+        self.read().await.body.clone()
     }
 }
 

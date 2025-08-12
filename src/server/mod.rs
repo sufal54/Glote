@@ -1,20 +1,35 @@
-use std::io::{ BufRead, BufReader, ErrorKind, Read };
-use std::net::TcpListener;
-use std::sync::{ Arc, RwLock };
+use tokio::{
+    io::{ AsyncBufReadExt, AsyncReadExt, BufReader, ErrorKind },
+    net::{ TcpListener, TcpStream },
+    runtime::Runtime,
+    sync::RwLock,
+};
+use std::{ future::Future, pin::Pin };
+use std::sync::{ Arc };
 use std::time::Instant;
+
+pub mod macros;
 
 use crate::request::{ parse_path_params, Request };
 use crate::response::Response;
-use crate::workerpool::WorkerPool;
+// use crate::workerpool::WorkerPool;
 
-// Atomically reference counter with safely travale though thread with own lifetime/ownership
-pub type Next<'a> = &'a mut dyn FnMut();
+pub type Next = Box<dyn (FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>>) + Send + Sync>;
 
-pub type Handler = dyn Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static;
-pub type Middleware = dyn Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) +
+pub type Middleware = dyn (Fn(
+    Arc<RwLock<Request>>,
+    Arc<RwLock<Response>>,
+    Next
+) -> Pin<Box<dyn Future<Output = ()> + Send>>) +
     Send +
-    Sync +
-    'static;
+    Sync;
+
+pub type Handler = dyn (Fn(
+    Arc<RwLock<Request>>,
+    Arc<RwLock<Response>>
+) -> Pin<Box<dyn Future<Output = ()> + Send>>) +
+    Send +
+    Sync;
 
 // Metadata of routes
 #[derive(Clone)]
@@ -28,74 +43,94 @@ struct Route {
 pub struct Glote {
     routes: Arc<RwLock<Vec<Route>>>,
     middleware: Arc<RwLock<Vec<Arc<Middleware>>>>,
-    pool: WorkerPool,
+    // pool: WorkerPool,
     static_path: Option<String>,
+    runtime: Runtime,
 }
 
 impl Glote {
     // Returns Arc self
     pub fn new() -> Arc<Self> {
         // Number of core in our cpu
-        let num_cores = std::thread
-            ::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
+        // let num_cores = std::thread
+        //     ::available_parallelism()
+        //     .map(|n| n.get())
+        //     .unwrap_or(1);
         // Total worker Defualt (total core * 4) or 4
         Arc::new(Self {
             routes: Arc::new(RwLock::new(Vec::new())),
             middleware: Arc::new(RwLock::new(Vec::new())),
-            pool: WorkerPool::new(num_cores * 4),
+            // pool: WorkerPool::new(num_cores * 4),
             static_path: None,
+            runtime: tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"),
         })
     }
     // Manually set number of workers
-    pub fn set_warkers(&mut self, size: usize) {
-        self.pool = WorkerPool::new(size);
+    // pub fn set_warkers(&mut self, size: usize) {
+    //     self.pool = WorkerPool::new(size);
+    // }
+
+    pub fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        self.runtime.block_on(fut)
     }
 
     // Runs Global+route middleware and final handler
-    fn run_handlers(
+    async fn run_handlers(
         &self,
         req: Arc<RwLock<Request>>,
         res: Arc<RwLock<Response>>,
         middlewares: &[Arc<Middleware>],
-        final_handler: impl FnMut() + Send + 'static
+        final_handler: Arc<Handler>
     ) {
-        let req = Arc::clone(&req);
-        let res = Arc::clone(&res);
-        let middlewares = middlewares.to_vec();
+        fn call_middleware(
+            req: Arc<RwLock<Request>>,
+            res: Arc<RwLock<Response>>,
+            middlewares: &[Arc<Middleware>],
+            idx: usize,
+            final_handler: Arc<Handler>
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            if idx == middlewares.len() {
+                Box::pin(final_handler(req, res))
+            } else {
+                let mw = middlewares[idx].clone();
+                let new_req = req.clone();
+                let new_res = res.clone();
+                let new_middleware = middlewares.to_vec();
+                let new_final_handler = final_handler.clone();
 
-        // Store final handler into box for linklist fashion with multiple middlewares
-        let mut final_handler = Some(Box::new(final_handler) as Box<dyn FnMut()>);
-        // makes chain in reverse way
-        for mw in middlewares.into_iter().rev() {
-            let req = req.clone();
-            let res = res.clone();
-            let mut next = final_handler.take().unwrap();
-            final_handler = Some(
-                Box::new(move || {
-                    // case we send response and don't want to go deeper
-                    if !res.read().unwrap().is_stopped() {
-                        mw(req.clone(), res.clone(), &mut next);
-                    }
+                let next: Next = Box::new(move || {
+                    Box::pin(
+                        call_middleware(
+                            new_req.clone(),
+                            new_res.clone(),
+                            &new_middleware,
+                            idx + 1,
+                            new_final_handler.clone()
+                        )
+                    )
+                });
+
+                Box::pin(async move {
+                    mw(req, res, next).await;
                 })
-            );
-        }
-
-        if let Some(mut chain) = final_handler {
-            // case we send response and don't want to go deeper
-            if !res.read().unwrap().is_stopped() {
-                chain();
             }
         }
+
+        call_middleware(req, res, middlewares, 0, final_handler).await;
     }
 
     // Set Global Middleware
-    pub fn use_middleware<F>(&self, middleware: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) + Send + Sync + 'static
+    pub async fn use_middleware<F, Fut>(&self, middleware: F)
+        where
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = ()> + Send + 'static
     {
-        let mut middlewares = self.middleware.write().unwrap();
-        middlewares.push(Arc::new(middleware));
+        let wrapped = move |req, res, next| {
+            Box::pin(middleware(req, res, next)) as Pin<Box<dyn Future<Output = ()> + Send>>
+        };
+
+        let mut middlewares = self.middleware.write().await;
+        middlewares.push(Arc::new(wrapped));
     }
 
     pub fn static_file(&mut self, path: &str) {
@@ -105,35 +140,46 @@ impl Glote {
     /**
      * Start our server at specific port
      */
-    pub fn listen(self: Arc<Self>, port: u16) {
-        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
-        listener.set_nonblocking(true).unwrap();
+    pub async fn listen(self: Arc<Self>, port: u16) -> tokio::io::Result<()> {
+        let listener = TcpListener::bind(("127.0.0.1", port)).await?;
 
         println!("\n---------------------\nServer running on port {}", port);
 
+        let global_middleware = self.middleware.read().await.clone();
+
+        for route in self.routes.write().await.iter_mut() {
+            let mut new_middleware = global_middleware.clone();
+
+            let route_specific = std::mem::take(&mut route.middleware);
+
+            new_middleware.extend(route_specific);
+            route.middleware = new_middleware;
+        }
+
+        drop(global_middleware);
+
         // Listening incoming request
         loop {
-            match listener.accept() {
+            match listener.accept().await {
                 Ok((s, _add)) => {
                     // Filter out raw stream from inconging request
-                    s.set_nonblocking(true).unwrap();
                     let stream = s;
                     // Clone of our Routes
                     let routers_clone = {
-                        let guard = self.routes.read().unwrap();
+                        let guard = self.routes.read().await;
                         guard.clone()
                     };
                     // Clone of our Middleware
-                    let middleware_clone = {
-                        let guard = self.middleware.read().unwrap();
-                        guard.clone()
-                    };
+                    // let middleware_clone = {
+                    //     let guard = self.middleware.read().await;
+                    //     guard.clone()
+                    // };
                     // static file not used
                     let _static_file = self.static_path.clone();
 
                     let this = self.clone();
                     // Assign a Worker though warkerpool
-                    self.pool.execute(move || {
+                    tokio::spawn(async move {
                         // Current time for time takes to fullfill the request
                         let now = Instant::now();
                         // Shadowing make mutable
@@ -147,7 +193,7 @@ impl Glote {
 
                         loop {
                             buffer.clear();
-                            match reader.read_line(&mut buffer) {
+                            match reader.read_line(&mut buffer).await {
                                 Ok(0) => {
                                     break;
                                 }
@@ -159,7 +205,7 @@ impl Glote {
                                     lines.push(line);
                                 }
                                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                    std::thread::sleep(std::time::Duration::from_millis(5));
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                                     continue;
                                 }
                                 Err(ref e) if e.kind() == ErrorKind::Interrupted => {
@@ -184,14 +230,13 @@ impl Glote {
                             // Make buffer to store full content
                             let mut buf = vec![0u8; len];
                             // Store data into buf
-                            match reader.read_exact(&mut buf) {
+                            match reader.read_exact(&mut buf).await {
                                 Ok(_) => {
                                     let body = String::from_utf8_lossy(&buf).to_string();
                                     body_lines.extend(body.lines().map(|s| s.to_string()));
                                 }
                                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                    std::thread::sleep(std::time::Duration::from_millis(5));
-                                    // Optionally retry loop here (not necessary unless needed)
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                                     return;
                                 }
                                 Err(e) => {
@@ -227,11 +272,7 @@ impl Glote {
                                     let req_with_params = Arc::new(RwLock::new(req_with_params));
 
                                     // Combined Global Middleware and Routes Middleware
-                                    let combined_middleware: Vec<_> = middleware_clone
-                                        .iter()
-                                        .chain(route.middleware.iter())
-                                        .cloned()
-                                        .collect();
+                                    let combined_middleware: Vec<_> = route.middleware.clone();
 
                                     if let Some(res_actual) = res_opt.take() {
                                         // Move ownership
@@ -242,17 +283,8 @@ impl Glote {
                                             Arc::clone(&req_for_handler),
                                             Arc::clone(&res_for_handler),
                                             &combined_middleware,
-                                            {
-                                                let req_inner = req_for_handler.clone();
-                                                let res_inner = res_for_handler.clone();
-                                                move || {
-                                                    (route.handler)(
-                                                        req_inner.clone(),
-                                                        res_inner.clone()
-                                                    );
-                                                }
-                                            }
-                                        );
+                                            route.handler.clone()
+                                        ).await;
 
                                         matched = true;
                                         break;
@@ -265,9 +297,9 @@ impl Glote {
                         // Case route not matched
                         if !matched {
                             if let Some(res) = res_opt {
-                                let mut res = res.write().unwrap();
-                                res.status(404);
-                                res.send("404 Not Found");
+                                let mut res = res.write().await;
+                                res.status(404).await;
+                                res.send("404 Not Found").await;
                             }
                             println!("\x1b[31m{} {}: {:?}\x1b[0m ", req.method, req.path, duration);
                         } else {
@@ -283,177 +315,271 @@ impl Glote {
     // ========== Get Method ============
 
     // Get routes without middleware
-    pub fn get<F>(&self, path: &str, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+    pub async fn get<F, Fut>(&self, path: &str, handler: F)
+        where
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = ()> + Send + 'static
     {
-        // Make empty middleware
-        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
+        // Empty middleware vec
+        let empty_middleware: Vec<Arc<Middleware>> = vec![];
 
-        self.get_with_middleware(path, empty_middleware, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            let fut = handler(req, res);
+            Box::pin(fut) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.get_with_middleware_run(path, empty_middleware, wrapped_handler).await;
     }
 
     // Get routes with middleware
-    pub fn get_with_middleware<F>(
+    pub async fn get_with_middleware<Mfut, F, Ffut>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) -> Mfut>,
         handler: F
     )
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+        where
+            Mfut: Future<Output = ()> + Send + 'static,
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Ffut + Send + Sync + 'static,
+            Ffut: Future<Output = ()> + Send + 'static
     {
-        // Warp all middleware with Arc
-        let wrapped: Vec<Arc<Middleware>> = middleware
+        let wrapped_middleware: Vec<Arc<Middleware>> = middleware
             .into_iter()
-            .map(|m| Arc::new(m) as Arc<Middleware>)
+            .map(|mw_fn| {
+                let wrapped = move |
+                    req: Arc<RwLock<Request>>,
+                    res: Arc<RwLock<Response>>,
+                    next: Next
+                | {
+                    Box::pin(mw_fn(req, res, next)) as Pin<Box<dyn Future<Output = ()> + Send>>
+                };
+                Arc::new(wrapped) as Arc<Middleware>
+            })
             .collect();
 
-        self.get_with_middleware_run(path, wrapped, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            Box::pin(handler(req, res)) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.get_with_middleware_run(path, wrapped_middleware, wrapped_handler).await;
     }
 
     // Responsible for runing both Get without middleware or with middleware
-    fn get_with_middleware_run<F>(&self, path: &str, middleware: Vec<Arc<Middleware>>, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
-    {
-        // Sets route Metadata
+    async fn get_with_middleware_run(
+        &self,
+        path: &str,
+        middleware: Vec<Arc<Middleware>>,
+        handler: Arc<Handler>
+    ) {
         let route = Route {
             method: "GET".to_string(),
             path: path.to_string(),
             middleware,
-            handler: Arc::new(handler),
+            handler,
         };
-        // Push with Global routes
-        self.routes.write().unwrap().push(route);
+
+        self.routes.write().await.push(route);
     }
 
-    // ========== Post Method ============
-    // Post routes without middleware
-    pub fn post<F>(&self, path: &str, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+    // // ========== Post Method ============
+    // POST routes without middleware
+    pub async fn post<F, Fut>(&self, path: &str, handler: F)
+        where
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = ()> + Send + 'static
     {
-        // Make empty middleware
-        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
+        let empty_middleware: Vec<Arc<Middleware>> = vec![];
 
-        self.post_with_middleware(path, empty_middleware, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            let fut = handler(req, res);
+            Box::pin(fut) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.post_with_middleware_run(path, empty_middleware, wrapped_handler).await;
     }
 
-    // Post routes with middleware
-    pub fn post_with_middleware<F>(
+    // POST with middleware
+    pub async fn post_with_middleware<Mfut, F, Ffut>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) -> Mfut>,
         handler: F
     )
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+        where
+            Mfut: Future<Output = ()> + Send + 'static,
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Ffut + Send + Sync + 'static,
+            Ffut: Future<Output = ()> + Send + 'static
     {
-        // Warp all middleware with Arc
-        let wrapped: Vec<Arc<Middleware>> = middleware
+        let wrapped_middleware: Vec<Arc<Middleware>> = middleware
             .into_iter()
-            .map(|m| Arc::new(m) as Arc<Middleware>)
+            .map(|mw_fn| {
+                let wrapped = move |
+                    req: Arc<RwLock<Request>>,
+                    res: Arc<RwLock<Response>>,
+                    next: Next
+                | {
+                    Box::pin(mw_fn(req, res, next)) as Pin<Box<dyn Future<Output = ()> + Send>>
+                };
+                Arc::new(wrapped) as Arc<Middleware>
+            })
             .collect();
 
-        self.post_with_middleware_run(path, wrapped, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            Box::pin(handler(req, res)) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.post_with_middleware_run(path, wrapped_middleware, wrapped_handler).await;
     }
 
-    // Responsible for running both Post without middleware or with middleware
-    fn post_with_middleware_run<F>(&self, path: &str, middleware: Vec<Arc<Middleware>>, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
-    {
+    // POST route registration helper
+    async fn post_with_middleware_run(
+        &self,
+        path: &str,
+        middleware: Vec<Arc<Middleware>>,
+        handler: Arc<Handler>
+    ) {
         let route = Route {
             method: "POST".to_string(),
             path: path.to_string(),
             middleware,
-            handler: Arc::new(handler),
+            handler,
         };
-        self.routes.write().unwrap().push(route);
+
+        self.routes.write().await.push(route);
     }
 
-    // ========== Put Method ============
-    // Put routes without middleware
-    pub fn put<F>(&self, path: &str, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+    // // ========== Put Method ============
+    // PUT routes without middleware
+    pub async fn put<F, Fut>(&self, path: &str, handler: F)
+        where
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = ()> + Send + 'static
     {
-        // Make empty middleware
-        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
+        let empty_middleware: Vec<Arc<Middleware>> = vec![];
 
-        self.put_with_middleware(path, empty_middleware, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            let fut = handler(req, res);
+            Box::pin(fut) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.put_with_middleware_run(path, empty_middleware, wrapped_handler).await;
     }
 
-    // Put routes with middleware
-    pub fn put_with_middleware<F>(
+    // PUT with middleware
+    pub async fn put_with_middleware<Mfut, F, Ffut>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) -> Mfut>,
         handler: F
     )
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+        where
+            Mfut: Future<Output = ()> + Send + 'static,
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Ffut + Send + Sync + 'static,
+            Ffut: Future<Output = ()> + Send + 'static
     {
-        // Warp all middleware with Arc
-        let wrapped: Vec<Arc<Middleware>> = middleware
+        let wrapped_middleware: Vec<Arc<Middleware>> = middleware
             .into_iter()
-            .map(|m| Arc::new(m) as Arc<Middleware>)
+            .map(|mw_fn| {
+                let wrapped = move |
+                    req: Arc<RwLock<Request>>,
+                    res: Arc<RwLock<Response>>,
+                    next: Next
+                | {
+                    Box::pin(mw_fn(req, res, next)) as Pin<Box<dyn Future<Output = ()> + Send>>
+                };
+                Arc::new(wrapped) as Arc<Middleware>
+            })
             .collect();
 
-        self.put_with_middleware_run(path, wrapped, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            Box::pin(handler(req, res)) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.put_with_middleware_run(path, wrapped_middleware, wrapped_handler).await;
     }
 
-    // Responsible for running both Put without middleware or with middleware
-    fn put_with_middleware_run<F>(&self, path: &str, middleware: Vec<Arc<Middleware>>, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
-    {
+    // PUT route registration helper
+    async fn put_with_middleware_run(
+        &self,
+        path: &str,
+        middleware: Vec<Arc<Middleware>>,
+        handler: Arc<Handler>
+    ) {
         let route = Route {
             method: "PUT".to_string(),
             path: path.to_string(),
             middleware,
-            handler: Arc::new(handler),
+            handler,
         };
-        self.routes.write().unwrap().push(route);
+
+        self.routes.write().await.push(route);
     }
 
-    // ========== Delete Method ============
+    // // ========== Delete Method ============
 
-    // Delete routes without middleware
-    pub fn delete<F>(&self, path: &str, handler: F)
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+    // DELETE routes without middleware
+    pub async fn delete<F, Fut>(&self, path: &str, handler: F)
+        where
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = ()> + Send + 'static
     {
-        // Make empty middleware
-        let empty_middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)> = vec![];
+        let empty_middleware: Vec<Arc<Middleware>> = vec![];
 
-        self.delete_with_middleware(path, empty_middleware, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            let fut = handler(req, res);
+            Box::pin(fut) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.delete_with_middleware_run(path, empty_middleware, wrapped_handler).await;
     }
 
-    // Delete routes with middleware
-    pub fn delete_with_middleware<F>(
+    // DELETE with middleware
+    pub async fn delete_with_middleware<Mfut, F, Ffut>(
         &self,
         path: &str,
-        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next)>,
+        middleware: Vec<fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>, Next) -> Mfut>,
         handler: F
     )
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
+        where
+            Mfut: Future<Output = ()> + Send + 'static,
+            F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) -> Ffut + Send + Sync + 'static,
+            Ffut: Future<Output = ()> + Send + 'static
     {
-        // Warp all middleware with Arc
-        let wrapped: Vec<Arc<Middleware>> = middleware
+        let wrapped_middleware: Vec<Arc<Middleware>> = middleware
             .into_iter()
-            .map(|m| Arc::new(m) as Arc<Middleware>)
+            .map(|mw_fn| {
+                let wrapped = move |
+                    req: Arc<RwLock<Request>>,
+                    res: Arc<RwLock<Response>>,
+                    next: Next
+                | {
+                    Box::pin(mw_fn(req, res, next)) as Pin<Box<dyn Future<Output = ()> + Send>>
+                };
+                Arc::new(wrapped) as Arc<Middleware>
+            })
             .collect();
 
-        self.delete_with_middleware_run(path, wrapped, handler);
+        let wrapped_handler: Arc<Handler> = Arc::new(move |req, res| {
+            Box::pin(handler(req, res)) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
+
+        self.delete_with_middleware_run(path, wrapped_middleware, wrapped_handler).await;
     }
 
-    // Responsible for running both Delete without middleware or with middleware
-    fn delete_with_middleware_run<F>(
+    // DELETE route registration helper
+    async fn delete_with_middleware_run(
         &self,
         path: &str,
         middleware: Vec<Arc<Middleware>>,
-        handler: F
-    )
-        where F: Fn(Arc<RwLock<Request>>, Arc<RwLock<Response>>) + Send + Sync + 'static
-    {
+        handler: Arc<Handler>
+    ) {
         let route = Route {
             method: "DELETE".to_string(),
             path: path.to_string(),
             middleware,
-            handler: Arc::new(handler),
+            handler,
         };
-        self.routes.write().unwrap().push(route);
+
+        self.routes.write().await.push(route);
     }
 }

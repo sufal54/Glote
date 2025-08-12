@@ -11,11 +11,18 @@ use glote::Glote;
 
 fn main() {
     let server = Glote::new();
-    server.get("/", |req, res| {
-        res.send("Hello, Glote!");
-    });
+    server.block_on(async{
+        run_server(server.clone()).await;
+    })
+}
 
-    server.listen(8080);
+async fn run_server(server:Arc<Glote>){
+    server.get("/", |req, res| {
+            res.send("Hello, Glote!");
+        }
+    ).await;
+
+    server.listen(8080).await;
 }
 ```
 
@@ -27,33 +34,41 @@ Glote supports GET, POST, PUT, and DELETE methods.
 
 ```rust
 server.get("/hello", |req, res| {
-    res.send("GET route");
-});
+    res.send("GET route").await;
+}).await;
+
+// or
+use glote::han;
+
+server.get("/hello",han!(req,res,{
+    res.send("GET route").await;
+}))
+
 ```
 
 - POST
 
 ```rust
 server.post("/submit", |req, res| {
-    let data = req.body().unwrap_or("No body".into());
-    res.send(&format!("Posted: {}", data));
-});
+    let data = req.read().await.body.unwrap_or("No body".into());
+    res.send(&format!("Posted: {}", data)).await;
+}).await;
 ```
 
 - PUT
 
 ```rust
 server.put("/update", |req, res| {
-    res.send("PUT route");
-});
+    res.send("PUT route").await;
+}).await;
 ```
 
 - DELETE
 
 ```rust
 server.delete("/delete", |req, res| {
-    res.send("DELETE route");
-});
+    res.send("DELETE route").await;
+}).await;
 ```
 
 ## Path Parameters
@@ -62,18 +77,18 @@ Use : to define path variables.
 
 ```rust
 server.get("/user/:id", |req, res| {
-    let user_id = req.params("id").unwrap_or_default();
-    res.send(&format!("User ID: {}", user_id));
-});
+    let user_id = req.read().await.params("id").cloned().unwrap_or_default();
+    res.send(&format!("User ID: {}", user_id)).await;
+}).await;
 ```
 
 ## Query Parameters
 
 ```rust
 server.get("/search", |req, res| {
-    let query = req.query("q").unwrap_or("none".into());
-    res.send(&format!("You searched: {}", query));
-});
+    let query = req.read().await.query("q").unwrap_or("none".into());
+    res.send(&format!("You searched: {}", query)).await;
+}).await;
 ```
 
 ## Request Body
@@ -82,9 +97,9 @@ Supports reading body for POST, PUT, etc.
 
 ```rust
 server.post("/echo", |req, res| {
-    let body = req.body().unwrap_or_default();
-    res.send(&body);
-});
+    let body = req.read().await.body().unwrap_or_default();
+    res.send(&body).await;
+}).await;
 ```
 
 # Middleware
@@ -98,10 +113,11 @@ use glote::{RequestExt}; // Needed for req.with_read
 
 server.use_middleware(|req, _res, next| {
     req.with_read(|r| {
+        let r = r.read().await;
         println!("{} {}", r.method, r.path);
-    });
-    next();
-});
+    }).await;
+    next().await;
+}).await;
 ```
 
 - or
@@ -110,27 +126,30 @@ Make sure you release the lock
 
 ```rust
 server.use_middleware(|req, _res, next| {
-    let req = req.read().unwrap();
+    let req = req.read().await.unwrap();
     println!("{} {}", req.method, req.path);
     drop(req); // Drop it manually or it's takes resources or wirte lock which makes trouble in some cases
-    next();
-});
+    next().await;
+}).await;
 ```
 
 ## Route-specific Middleware
 
 ```rust
-use glote::{Req,Res,Next};
+use glote::{Req,Res,Next,mid};
 use std::sync::{Arc, RwLock};
 
 // Req = Arc<Rwlock<Request>>
 // Res = Arc<Rwlock<Responce>>
 // Next = &mut dyn FnMut()
 
-fn logger(req: Req, res: Res, next: Next) {
-    println!("[Route MW] {}", req.read().unwrap().path);
-    next();
-}
+let logger = mid!(req, res, next, {
+        println!("1. {}", req.read().await.path);
+
+        next().await;
+    });
+
+
 
 server.get_with_middleware("/check", vec![logger], |req, res| {
     res.send("Checked with middleware");
@@ -159,13 +178,13 @@ use glote::{Cors, CorsExt};
 let cors = Cors::new(&["http://localhost:4000", "http://127.0.0.1:4000"]);
 
 // Register CORS middleware
-server.use_middleware({
-    let cors = Arc::clone(&cors);
-    move |req, res, next| {
-        // CorsExt for this method
-        cors.run_middleware(req, res, next);
+server.use_middleware(move |req, res, next| {
+        let cors = Arc::clone(&cors);
+        async move {
+            cors.run_middleware(req, res, next).await;
+        }
     }
-});
+).await;
 ```
 
 # Response Extensions
@@ -173,7 +192,7 @@ server.use_middleware({
 ## Text Response
 
 ```rust
-res.send("Hello World!");
+res.send("Hello World!").await;
 ```
 
 ## JSON Response
@@ -184,22 +203,13 @@ struct Message {
     msg: String,
 }
 
-res.json(&Message { msg: "Hi".into() });
+res.json(&Message { msg: "Hi".into() }).await;
 ```
 
 ## Set Status
 
 ```rust
-res.status(201); // Created
-```
-
-# Worker Pool
-
-The framework uses a thread pool (4 × CPU cores by default). You can configure manually:
-
-```rust
-let mut server = Glote::new();
-server.set_warkers(8); // Manually set worker
+res.status(201).await; // Created
 ```
 
 # Example App
@@ -208,6 +218,12 @@ server.set_warkers(8); // Manually set worker
 fn main() {
     let server = Glote::new();
 
+    server.block_on(async{
+        run_server(server.clone()).await;
+    });
+}
+
+async run_server(server:Arc<Glote>){
     server.use_middleware(|req, _res, next| {
         req.with_read(|r| {
             println!("Global: {} {}", r.method, r.path);

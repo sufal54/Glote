@@ -1,39 +1,40 @@
-use std::{ collections::HashMap, io::Write, net::TcpStream, sync::{ Arc, RwLock } };
+use tokio::{ net::TcpStream, io::{ AsyncWriteExt, BufWriter }, sync::RwLock };
+use std::{ collections::HashMap, pin::Pin, sync::Arc };
 
 use serde::Serialize;
 
 pub type Res = Arc<RwLock<Response>>;
 
 pub trait ResponseExt {
-    fn with_write<F>(&self, f: F) where F: FnOnce(&mut Response);
-    fn status(&self, code: u16);
-    fn send(&self, body: &str);
-    fn json<T: Serialize>(&self, data: &T);
+    async fn with_write<F, Fut>(&self, f: F)
+        where F: FnOnce(Res) -> Fut + Send, Fut: Future<Output = ()> + Send;
+    async fn status(&self, code: u16);
+    async fn send(&self, body: &str);
+    async fn json<T: Serialize>(&self, data: &T);
 }
 
 impl ResponseExt for Res {
-    fn with_write<F>(&self, f: F) where F: FnOnce(&mut Response) {
-        if let Ok(mut res) = self.write() {
-            f(&mut res);
-        }
+    async fn with_write<F, Fut>(&self, f: F)
+        where F: FnOnce(Res) -> Fut + Send, Fut: Future<Output = ()> + Send
+    {
+        let res_clone = self.clone();
+
+        f(res_clone.clone()).await;
     }
 
-    fn status(&self, code: u16) {
-        if let Ok(mut res) = self.write() {
-            res.status(code);
-        }
+    async fn status(&self, code: u16) {
+        let mut res = self.write().await;
+        res.status(code).await;
     }
 
-    fn send(&self, body: &str) {
-        if let Ok(res) = self.read() {
-            res.send(body);
-        }
+    async fn send(&self, body: &str) {
+        let res = self.read().await;
+        res.send(body).await;
     }
 
-    fn json<T: Serialize>(&self, data: &T) {
-        if let Ok(res) = self.read() {
-            res.json(data);
-        }
+    async fn json<T: Serialize>(&self, data: &T) {
+        let res = self.read().await;
+        res.json(data).await;
     }
 }
 
@@ -41,7 +42,7 @@ impl ResponseExt for Res {
 pub struct Response {
     stream: Arc<RwLock<TcpStream>>,
     status: u16,
-    headers: Arc<RwLock<HashMap<String, String>>>,
+    pub headers: Arc<RwLock<HashMap<String, String>>>,
     stopped: Arc<RwLock<bool>>,
 }
 
@@ -55,36 +56,31 @@ impl Response {
         }
     }
 
-    pub fn set_header(&self, key: &str, value: &str) {
-        if let Ok(mut headers) = self.headers.write() {
-            headers.insert(key.to_string(), value.to_string());
-        }
+    pub async fn set_header(&self, key: &str, value: &str) {
+        let mut headers = self.headers.write().await;
+        headers.insert(key.to_string(), value.to_string());
     }
 
-    pub fn remove_header(&self, key: &str) {
-        if let Ok(mut headers) = self.headers.write() {
-            headers.remove(key);
-        }
+    pub async fn remove_header(&self, key: &str) {
+        let mut headers = self.headers.write().await;
+        headers.remove(key);
     }
 
-    fn stop(&self) {
-        let _ = self.stopped.write().map(|mut s| {
-            *s = true;
-        });
+    async fn stop(&self) {
+        let mut s = self.stopped.write().await;
+        *s = true;
     }
 
-    pub fn is_stopped(&self) -> bool {
-        self.stopped
-            .read()
-            .map(|s| *s)
-            .unwrap_or(false)
+    pub async fn is_stopped(&self) -> bool {
+        let stopped = *self.stopped.read().await;
+        stopped.clone()
     }
 
-    pub fn status(&mut self, code: u16) {
+    pub async fn status(&mut self, code: u16) {
         self.status = code;
     }
 
-    pub fn send(&self, body: &str) {
+    pub async fn send(&self, body: &str) {
         let res = format!(
             "HTTP/1.1 {} {}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: {}\r\n\r\n{}",
             self.status,
@@ -93,14 +89,14 @@ impl Response {
             body
         );
 
-        if let Ok(mut stream) = self.stream.write() {
-            let _ = stream.write_all(res.as_bytes());
-            stream.flush().unwrap();
-        }
-        self.stop();
+        let mut stream = self.stream.write().await;
+        let _ = stream.write_all(res.as_bytes()).await;
+        // stream.flush().await;
+
+        self.stop().await;
     }
 
-    pub fn json<T: Serialize>(&self, data: &T) {
+    pub async fn json<T: Serialize>(&self, data: &T) {
         let body = serde_json::to_string(data).unwrap();
 
         let res = format!(
@@ -111,11 +107,11 @@ impl Response {
             body
         );
 
-        if let Ok(mut stream) = self.stream.write() {
-            let _ = stream.write_all(res.as_bytes());
-            stream.flush().unwrap();
-        }
-        self.stop();
+        let mut stream = self.stream.write().await;
+        let _ = stream.write_all(res.as_bytes()).await;
+        // stream.flush().await;
+
+        self.stop().await;
     }
 }
 

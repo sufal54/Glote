@@ -1,17 +1,21 @@
-use std::sync::{ Arc, RwLock };
+use std::sync::{ Arc };
+use tokio::sync::RwLock;
 
 use crate::{ Next, Req, Res, RequestExt, ResponseExt };
 
 pub trait CorsExt {
-    fn run_middleware(&self, req: Req, res: Res, next: Next);
+    async fn run_middleware(&self, req: Req, res: Res, next: Next);
 }
 
 impl CorsExt for Arc<RwLock<Cors>> {
-    fn run_middleware(&self, req: Req, res: Res, next: Next) {
-        if let Ok(cors) = self.read() {
-            cors.cors_middleware(req, res, next);
-        } else {
-            next();
+    async fn run_middleware(&self, req: Req, res: Res, next: Next) {
+        match self.try_read() {
+            Ok(cors) => {
+                cors.cors_middleware(req, res, next).await;
+            }
+            Err(_) => {
+                next().await;
+            }
         }
     }
 }
@@ -32,29 +36,32 @@ impl Cors {
         )
     }
 
-    pub fn cors_middleware(&self, req: Req, res: Res, next: Next) {
-        let origin = req.with_read(|req| {
-            req.headers.get("origin").cloned().unwrap_or_default()
-        });
+    pub async fn cors_middleware(&self, req: Req, res: Res, next: Next) {
+        let origin = {
+            let req_read = req.read().await;
+            req_read.headers.get("origin").cloned().unwrap_or_default()
+        };
 
         let allow_all = self.allow_origins.contains(&"*".to_string());
 
         // Case Unlisted Origin
         if !allow_all && !self.allow_origins.contains(&origin) {
-            res.with_write(|res| {
-                res.status(401);
-                res.set_header("Content-Type", "text/plain");
-                res.send("Unauthorized origin");
-            });
+            res.with_write(|res| async move {
+                let mut res = res.write().await;
+                res.status(401).await;
+                res.set_header("Content-Type", "text/plain").await;
+                res.send("Unauthorized origin").await;
+            }).await;
             return;
         }
 
-        res.with_write(|res| {
+        res.with_write(|res| async move {
+            let res = res.write().await;
             let allow_origin = if allow_all { "*" } else { &origin };
-            res.set_header("Access-Control-Allow-Origin", allow_origin);
-            res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        });
+            res.set_header("Access-Control-Allow-Origin", allow_origin).await;
+            res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS").await;
+        }).await;
 
-        next();
+        next().await;
     }
 }
