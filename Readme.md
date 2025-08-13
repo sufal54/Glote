@@ -20,7 +20,7 @@ fn main() {
 
 async fn run_server(server:Arc<Glote>){
     server.get("/", |req, res| {
-            res.send("Hello, Glote!");
+            res.send("Hello, Glote!").await;
         }
     ).await;
 
@@ -154,7 +154,7 @@ let logger = mid!(req, res, next, {
 
 
 server.get_with_middleware("/check", vec![logger], |req, res| {
-    res.send("Checked with middleware");
+    res.send("Checked with middleware").await;
 });
 ```
 
@@ -164,8 +164,8 @@ Return from middleware:
 
 ```rust
 server.use_middleware(|_req, res, _next| {
-    res.status(401);
-    res.send("Unauthorized"); // send and json method will automatically stop chain
+    res.status(401).await;
+    res.send("Unauthorized").await; // send and json method will automatically stop chain
 });
 
 ```
@@ -229,16 +229,16 @@ async run_server(server:Arc<Glote>){
     server.use_middleware(|req, _res, next| {
         req.with_read(|r| {
             println!("Global: {} {}", r.method, r.path);
-        });
-        next();
+        }).await;
+        next().await;
     });
 
     server.get("/hello/:name", |req, res| {
         let name = req.params("name").unwrap_or("guest".into());
-        res.send(&format!("Hello, {}!", name));
+        res.send(&format!("Hello, {}!", name)).await;
     });
 
-    server.listen(3000);
+    server.listen(3000).await;
 }
 
 ```
@@ -285,7 +285,7 @@ use glote::{RequestExt};
 
 req.with_read(|r| {
 println!("Method: {}", r.method);
-});
+}).await;
 ```
 
 - with_write(&self, f: F)
@@ -296,8 +296,8 @@ Mutably modifies the request inside a closure.
 use glote::{RequestExt};
 
 req.with_write(|r| {
-    r.path_params.insert("user".to_string(), "123".to_string());
-});
+    r.write().await.path_params.insert("user".to_string(), "123".to_string());
+}).await;
 ```
 
 # Response Struct
@@ -324,10 +324,10 @@ pub trait ResponseExt {
 ```rust
 use glote::{ ResponseExt };
 
-res.status(200);
-res.send("OK");
+res.status(200).await;
+res.send("OK").await;
 
-res.json(&serde_json::json!({ "message": "Success" }));
+res.json(&serde_json::json!({ "message": "Success" })).await;
 ```
 
 # Feature Roadmap
