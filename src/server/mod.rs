@@ -1,12 +1,14 @@
 use tokio::{
+    fs::File,
     io::{ AsyncBufReadExt, AsyncReadExt, BufReader, ErrorKind },
-    net::{ TcpListener, TcpStream },
+    net::TcpListener,
     runtime::Runtime,
     sync::RwLock,
 };
-use std::{ future::Future, pin::Pin };
+use std::{ cell::RefCell, future::Future, path::PathBuf, pin::Pin };
 use std::sync::{ Arc };
 use std::time::Instant;
+use mime_guess;
 
 pub mod macros;
 
@@ -44,34 +46,28 @@ pub struct Glote {
     routes: Arc<RwLock<Vec<Route>>>,
     middleware: Arc<RwLock<Vec<Arc<Middleware>>>>,
     // pool: WorkerPool,
-    static_path: Option<String>,
+    static_path: Arc<RwLock<Option<String>>>,
     runtime: Runtime,
 }
 
 impl Glote {
     // Returns Arc self
     pub fn new() -> Arc<Self> {
-        // Number of core in our cpu
-        // let num_cores = std::thread
-        //     ::available_parallelism()
-        //     .map(|n| n.get())
-        //     .unwrap_or(1);
-        // Total worker Defualt (total core * 4) or 4
         Arc::new(Self {
             routes: Arc::new(RwLock::new(Vec::new())),
             middleware: Arc::new(RwLock::new(Vec::new())),
-            // pool: WorkerPool::new(num_cores * 4),
-            static_path: None,
+            static_path: Arc::new(RwLock::new(None)),
             runtime: tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"),
         })
     }
-    // Manually set number of workers
-    // pub fn set_warkers(&mut self, size: usize) {
-    //     self.pool = WorkerPool::new(size);
-    // }
 
     pub fn block_on<F: Future>(&self, fut: F) -> F::Output {
         self.runtime.block_on(fut)
+    }
+
+    pub async fn static_path(&self, path: &str) {
+        let static_path = Arc::clone(&self.static_path);
+        *static_path.write().await = Some(path.into());
     }
 
     // Runs Global+route middleware and final handler
@@ -133,10 +129,6 @@ impl Glote {
         middlewares.push(Arc::new(wrapped));
     }
 
-    pub fn static_file(&mut self, path: &str) {
-        self.static_path = Some(path.into());
-    }
-
     /**
      * Start our server at specific port
      */
@@ -169,13 +161,8 @@ impl Glote {
                         let guard = self.routes.read().await;
                         guard.clone()
                     };
-                    // Clone of our Middleware
-                    // let middleware_clone = {
-                    //     let guard = self.middleware.read().await;
-                    //     guard.clone()
-                    // };
                     // static file not used
-                    let _static_file = self.static_path.clone();
+                    let static_file = self.static_path.clone();
 
                     let this = self.clone();
                     // Assign a Worker though warkerpool
@@ -294,9 +281,42 @@ impl Glote {
                         }
                         // Duration to fullfill the request
                         let duration = now.elapsed();
+
                         // Case route not matched
                         if !matched {
                             if let Some(res) = res_opt {
+                                if let Some(static_dir) = &static_file.read().await.as_ref() {
+                                    let mut file_path = PathBuf::from(static_dir);
+                                    let mut req_path = req.path.trim_start_matches('/').to_string();
+
+                                    if req_path.is_empty() {
+                                        req_path = "index.html".into();
+                                    }
+
+                                    file_path.push(req_path);
+
+                                    if let Ok(mut file) = File::open(&file_path).await {
+                                        let mut contents = Vec::new();
+                                        if file.read_to_end(&mut contents).await.is_ok() {
+                                            let mut res = res.write().await;
+                                            res.status(200).await;
+                                            res.send_bytes(
+                                                &contents,
+                                                mime_guess
+                                                    ::from_path(&file_path)
+                                                    .first_or_text_plain()
+                                                    .as_ref()
+                                            ).await;
+                                            println!(
+                                                "\x1b[34mSTATIC {}: {:?}\x1b[0m",
+                                                file_path.display(),
+                                                duration
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
+
                                 let mut res = res.write().await;
                                 res.status(404).await;
                                 res.send("404 Not Found").await;

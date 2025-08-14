@@ -189,6 +189,14 @@ server.use_middleware(move |req, res, next| {
 ).await;
 ```
 
+# Static file serve
+
+If you set static path the defualt root / is index.html
+
+```rust
+server.static_path("public").await; // Path of you static files
+```
+
 # Response Extensions
 
 ## Text Response
@@ -342,7 +350,7 @@ res.json(&serde_json::json!({ "message": "Success" })).await;
 
     ✅ Workerpool
 
-    ⏳ Static file serving
+    ✅ Static file serving
 
     ⏳ Cookie/session support
 

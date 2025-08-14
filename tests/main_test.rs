@@ -10,15 +10,16 @@ fn test_server_instantiation() {
 // use glote::{ Cors, CorsExt, Next, Req, RequestExt, Res, mid, han };
 
 // async fn hello(server: Arc<Glote>) {
+//     server.static_path("public").await;
 //     let cors = Cors::new(&vec!["127.0.0.1:5000"]);
 
 //     // let cors_clone = Arc::clone(&cors);
-//     server.use_middleware(move |req, res, next| {
-//         let cors = Arc::clone(&cors);
-//         async move {
-//             cors.run_middleware(req, res, next).await;
-//         }
-//     }).await;
+//     // server.use_middleware(move |req, res, next| {
+//     //     let cors = Arc::clone(&cors);
+//     //     async move {
+//     //         cors.run_middleware(req, res, next).await;
+//     //     }
+//     // }).await;
 
 //     // Global middleware logs every request path
 //     server.use_middleware(|req, res, next| async move {
@@ -28,47 +29,47 @@ fn test_server_instantiation() {
 //         next().await;
 //     }).await;
 
-//     // GET route with middleware
-//     server.get_with_middleware(
-//         "/",
-//         vec![
-//             mid!(req, res, next, {
-//                 println!("1. {}", req.read().await.path);
-//                 next().await;
-//             }),
-//             mid!(req, res, next, {
-//                 println!("2. Another middleware");
-//                 next().await;
-//             })
-//         ],
-//         han!(req, res, {
-//             println!("Handler");
-//             res.status(200).await;
-//             res.send("okay").await;
-//         })
-//     ).await;
+//     // // GET route with middleware
+//     // server.get_with_middleware(
+//     //     "/",
+//     //     vec![
+//     //         mid!(req, res, next, {
+//     //             println!("1. {}", req.read().await.path);
+//     //             next().await;
+//     //         }),
+//     //         mid!(req, res, next, {
+//     //             println!("2. Another middleware");
+//     //             next().await;
+//     //         })
+//     //     ],
+//     //     han!(req, res, {
+//     //         println!("Handler");
+//     //         res.status(200).await;
+//     //         res.send("okay").await;
+//     //     })
+//     // ).await;
 
-//     let yo = mid!(req, res, next, {
-//         println!("1. {}", req.read().await.path);
+//     // let yo = mid!(req, res, next, {
+//     //     println!("1. {}", req.read().await.path);
 
-//         next().await;
-//     });
+//     //     next().await;
+//     // });
 
-//     server.post_with_middleware(
-//         "/",
-//         vec![
-//             yo,
-//             mid!(req, res, next, {
-//                 println!("2. Another middleware");
-//                 next().await;
-//             })
-//         ],
-//         han!(req, res, {
-//             println!("Handler");
-//             res.status(200).await;
-//             res.send("okay").await;
-//         })
-//     ).await;
+//     // server.post_with_middleware(
+//     //     "/",
+//     //     vec![
+//     //         yo,
+//     //         mid!(req, res, next, {
+//     //             println!("2. Another middleware");
+//     //             next().await;
+//     //         })
+//     //     ],
+//     //     han!(req, res, {
+//     //         println!("Handler");
+//     //         res.status(200).await;
+//     //         res.send("okay").await;
+//     //     })
+//     // ).await;
 
 //     // Simple GET with path param and query param
 //     server.get("/hello/:name", |req, res| async move {

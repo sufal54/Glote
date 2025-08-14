@@ -56,6 +56,23 @@ impl Response {
         }
     }
 
+    pub async fn send_bytes(&self, bytes: &[u8], content_type: &str) {
+        let headers = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
+            self.status,
+            get_status_text(self.status),
+            content_type,
+            bytes.len()
+        );
+
+        let mut stream = self.stream.write().await;
+
+        let _ = stream.write_all(headers.as_bytes()).await;
+        let _ = stream.write_all(bytes).await;
+
+        self.stop().await;
+    }
+
     pub async fn set_header(&self, key: &str, value: &str) {
         let mut headers = self.headers.write().await;
         headers.insert(key.to_string(), value.to_string());
