@@ -1,7 +1,7 @@
 use std::sync::{ Arc };
 use tokio::sync::RwLock;
 
-use crate::{ Next, Req, Res, RequestExt, ResponseExt };
+use crate::{ Next, Req, Res, ResponseExt };
 
 pub trait CorsExt {
     async fn run_middleware(&self, req: Req, res: Res, next: Next);

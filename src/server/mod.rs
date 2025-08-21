@@ -5,7 +5,7 @@ use tokio::{
     runtime::Runtime,
     sync::RwLock,
 };
-use std::{ cell::RefCell, future::Future, path::PathBuf, pin::Pin };
+use std::{ future::Future, path::PathBuf, pin::Pin };
 use std::sync::{ Arc };
 use std::time::Instant;
 use mime_guess;
