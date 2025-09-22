@@ -2,7 +2,7 @@
 
 Glote is a fast web library in pure Rust, inspired by simplicity and performance. It supports routing, middleware, path/query/body parsing, JSON responses — all thread-safe and scalable using worker pools.
 
-- Note: Don't use version 0.2.4 this one is added a linux base function i fix it in 0.3.0
+- Note: Don't use version 0.2.4 this one is added a linux base function i fix it in 0.3.0^
 
 # Getting Started
 
