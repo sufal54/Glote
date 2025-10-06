@@ -1,4 +1,3 @@
-mod workerpool;
 mod server;
 mod request;
 mod response;
