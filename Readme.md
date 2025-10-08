@@ -24,7 +24,7 @@ async fn run_server(server:Arc<Glote>){
         }
     ).await;
 
-    server.listen(8080).await;
+    server.listen("0.0.0.0" ,8080).await;
 }
 ```
 
