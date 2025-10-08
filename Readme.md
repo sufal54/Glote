@@ -235,9 +235,11 @@ fn main() {
 
 async run_server(server:Arc<Glote>){
     server.use_middleware(|req, _res, next| {
+
         req.with_read(|r| {
             println!("Global: {} {}", r.method, r.path);
         }).await;
+
         next().await;
     });
 
@@ -246,7 +248,8 @@ async run_server(server:Arc<Glote>){
         res.send(&format!("Hello, {}!", name)).await;
     });
 
-    server.listen(3000).await;
+    let addr:&str = "0.0.0.0";
+    server.listen(addr,3000).await;
 }
 
 ```

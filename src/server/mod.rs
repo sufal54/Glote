@@ -132,8 +132,8 @@ impl Glote {
     /**
      * Start our server at specific port
      */
-    pub async fn listen(self: Arc<Self>, port: u16) -> tokio::io::Result<()> {
-        let listener = TcpListener::bind(("0.0.0.0", port)).await?;
+    pub async fn listen(self: Arc<Self>, addr: &str, port: u16) -> tokio::io::Result<()> {
+        let listener = TcpListener::bind((addr, port)).await?;
 
         println!("\n---------------------\nServer running on port {}", port);
 
