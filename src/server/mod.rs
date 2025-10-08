@@ -132,10 +132,10 @@ impl Glote {
     /**
      * Start our server at specific port
      */
-    pub async fn listen(self: Arc<Self>, addr: &str, port: u16) -> tokio::io::Result<()> {
-        let listener = TcpListener::bind((addr, port)).await?;
+    pub async fn listen(self: Arc<Self>, addr: (&str, u16)) -> tokio::io::Result<()> {
+        let listener = TcpListener::bind((addr.0, addr.1)).await?;
 
-        println!("\n---------------------\nServer running on port {}", port);
+        println!("\n---------------------\nServer running on port {}", addr.1);
 
         let global_middleware = self.middleware.read().await.clone();
 
